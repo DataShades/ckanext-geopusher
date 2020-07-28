@@ -2,3 +2,4 @@ ckanapi
 requests
 pyshp
 celery
+ckantoolkit

@@ -1,9 +1,7 @@
 import ckan.plugins as plugins
-import ckan.plugins.toolkit as toolkit
 import ckan.model as model
 
-import pylons.config as config
-import pylons
+import ckantoolkit as toolkit
 
 import uuid
 
@@ -12,7 +10,22 @@ import ckanapi
 from ckan.model.domain_object import DomainObjectOperation
 from ckan.plugins.toolkit import get_action
 
-from ckan.lib.celery_app import celery
+
+def _compat_enqueue(name, fn, args=None):
+    u"""
+    Enqueue a background job using Celery or RQ.
+    """
+    try:
+        # Try to use RQ
+        from ckan.plugins.toolkit import enqueue_job
+
+        enqueue_job(fn, args=args)
+    except ImportError:
+        # Fallback to Celery
+        import uuid
+        from ckan.lib.celery_app import celery
+
+        celery.send_task(name, args=args, task_id=str(uuid.uuid4()))
 
 
 class GeopusherPlugin(plugins.SingletonPlugin):
@@ -27,6 +40,7 @@ class GeopusherPlugin(plugins.SingletonPlugin):
         toolkit.add_resource('fanstatic', 'geopusher')
 
     def notify(self, entity, operation=None):
+        import ckanext.geopusher.tasks as tasks
         if isinstance(entity, model.Resource):
             resource_id = entity.id
             # new event is sent, then a changed event.
@@ -34,10 +48,10 @@ class GeopusherPlugin(plugins.SingletonPlugin):
                 # There is a NEW or CHANGED resource. We should check if
                 # it is a shape file and pass it off to Denis's code if
                 # so it can process it
-                site_url = config.get('ckan.site_url', 'http://localhost/')
+                site_url = toolkit.config.get('ckan.site_url', 'http://localhost/')
                 apikey = model.User.get('default').apikey
 
-                celery.send_task(
+                _compat_enqueue(
                     'geopusher.process_resource',
-                    args=[resource_id, site_url, apikey],
-                    task_id='{}-{}'.format(str(uuid.uuid4()), operation))
+                    tasks.process_resource_task,
+                    [resource_id, site_url, apikey])
